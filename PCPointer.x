@@ -106,7 +106,7 @@ static UIBezierPath *ArrowPath(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         PCLog(@"pcpointer 1.9 loaded (complete recon)");
         // mach服务名：指针守护进程的身份
-        Class specClass = objc_getClass("PSPointerDefaultServiceSpecification");
+        Class specClass = objc_getClass("PSPointerClientDefaultServiceSpecification");
         if (specClass) {
             SEL machSel = NSSelectorFromString(@"machName");
             SEL domSel = NSSelectorFromString(@"domainName");
