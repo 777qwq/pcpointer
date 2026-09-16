@@ -14,7 +14,6 @@ static void BBLog(NSString *msg) {
     fclose(f);
 }
 
-// macOS风格箭头（尖端原点）——在pointeruid进程内创建，不过XPC，直接渲染
 static UIBezierPath *ArrowPath(void) {
     UIBezierPath *p = [UIBezierPath bezierPath];
     [p moveToPoint:CGPointMake(0, 0)];
@@ -31,14 +30,27 @@ static UIBezierPath *ArrowPath(void) {
 static id MakeArrowShape(Class psClass) {
     SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
     if (![psClass respondsToSelector:customSel]) return nil;
-    id arrow = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
-    if (arrow) {
-        SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
-        if ([arrow respondsToSelector:pinSel]) {
-            ((void(*)(id, SEL, CGPoint))objc_msgSend)(arrow, pinSel, CGPointMake(0, 0));
+    id shape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
+    if (!shape) return nil;
+    // bounds手术（ivar直写）
+    unsigned int icount = 0;
+    Ivar *ivars = class_copyIvarList(psClass, &icount);
+    for (unsigned int i = 0; i < icount; i++) {
+        const char *nm = ivar_getName(ivars[i]) ?: "?";
+        const char *enc = ivar_getTypeEncoding(ivars[i]) ?: "";
+        if (strstr(nm, "_bounds") && strstr(enc, "CGRect")) {
+            ptrdiff_t off = ivar_getOffset(ivars[i]);
+            CGRect *r = (CGRect *)((char *)(__bridge void *)shape + off);
+            PCLog(@"[daemon] fixing _bounds");
+            *r = CGRectMake(0, 0, 14, 22);
         }
     }
-    return arrow;
+    if (ivars) free(ivars);
+    SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
+    if ([shape respondsToSelector:pinSel]) {
+        ((void(*)(id, SEL, CGPoint))objc_msgSend)(shape, pinSel, CGPointMake(0, 0));
+    }
+    return shape;
 }
 
 %hook PSPointerShape
@@ -46,7 +58,7 @@ static id MakeArrowShape(Class psClass) {
     id arrow = MakeArrowShape(self);
     if (arrow) {
         static BOOL l1 = NO;
-        if (!l1) { BBLog(@"systemShape -> arrow (daemon-side hijack)"); l1 = YES; }
+        if (!l1) { BBLog(@"systemShape -> arrow hijacked"); l1 = YES; }
         return arrow;
     }
     return %orig;
@@ -55,7 +67,7 @@ static id MakeArrowShape(Class psClass) {
     id arrow = MakeArrowShape(self);
     if (arrow) {
         static BOOL l2 = NO;
-        if (!l2) { BBLog(@"circleWithSize -> arrow (daemon-side)"); l2 = YES; }
+        if (!l2) { BBLog(@"circleWithSize -> arrow hijacked"); l2 = YES; }
         return arrow;
     }
     return %orig;
@@ -64,7 +76,7 @@ static id MakeArrowShape(Class psClass) {
     id arrow = MakeArrowShape(self);
     if (arrow) {
         static BOOL l3 = NO;
-        if (!l3) { BBLog(@"circleWithBounds -> arrow (daemon-side)"); l3 = YES; }
+        if (!l3) { BBLog(@"circleWithBounds -> arrow hijacked"); l3 = YES; }
         return arrow;
     }
     return %orig;
@@ -73,5 +85,5 @@ static id MakeArrowShape(Class psClass) {
 
 %ctor {
     %init;
-    BBLog(@"PCPointerBB injected into pointeruid (daemon-side arrow ready)");
+    BBLog([NSString stringWithFormat:@"PCPointerBB injected into %@", [NSProcessInfo.processInfo processName]]);
 }
