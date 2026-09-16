@@ -1,5 +1,12 @@
-{
-    Filter = {
-        Processes = ("SpringBoard", "backboardd");
-    };
-}
+(
+    {
+        Filter = {
+            Bundles = ("com.apple.springboard");
+        };
+    },
+    {
+        Filter = {
+            Processes = ("backboardd");
+        };
+    }
+)
