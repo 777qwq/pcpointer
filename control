@@ -1,6 +1,6 @@
 Package: com.user.pcpointer
 Name: PCPointer 电脑式指针
-Version: 2.1.0
+Version: 2.2.0
 Architecture: iphoneos-arm64
 Description: 把iPadOS圆点指针替换为电脑风格箭头指针
 Author: user
