@@ -69,15 +69,6 @@ static void StartBackboardRecon(void) {
     });
 }
 
-// A/B实验 v1.4.0：用官方roundedRect方块测试形状管线是否生效
-static id SquareShape(id psClass) {
-    SEL sel = NSSelectorFromString(@"roundedRectWithSize:cornerRadius:");
-    if ([psClass respondsToSelector:sel]) {
-        return ((id(*)(id, SEL, CGFloat, CGFloat))objc_msgSend)(psClass, sel, (CGFloat)30.0, (CGFloat)2.0);
-    }
-    return nil;
-}
-
 // 侦察模式 v1.0.0：dump SpringBoard 中 Pointer/Cursor 相关类及其方法清单
 // 产出 /var/mobile/pcpointer_recon.log 供分析绘制层，后续版本实现箭头替换
 
