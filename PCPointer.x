@@ -30,50 +30,24 @@ static UIBezierPath *ArrowPath(void) {
     return p;
 }
 
-// blob字节手术：定位形状内部编码数据，替换 inf/零 尺寸字段
+// ivar手术v2：修复编码匹配（contains而非prefix），直写_bounds
 static void FixShapeBounds(id shape) {
     @try {
         unsigned int icount = 0;
         Ivar *ivars = class_copyIvarList([shape class], &icount);
-        PCLog([NSString stringWithFormat:@"ivar count=%u", icount]);
         for (unsigned int i = 0; i < icount; i++) {
             const char *nm = ivar_getName(ivars[i]) ?: "?";
-            const char *enc = ivar_getTypeEncoding(ivars[i]) ?: "?";
+            const char *enc = ivar_getTypeEncoding(ivars[i]) ?: "";
             ptrdiff_t off = ivar_getOffset(ivars[i]);
-            PCLog([NSString stringWithFormat:@"ivar %s enc=%s off=%d", nm, enc, (int)off]);
-            if (enc[0] == '@') {
-                id obj = object_getIvar(shape, ivars[i]);
-                if ([obj isKindOfClass:[NSData class]]) {
-                    NSMutableData *md = [obj mutableCopy];
-                    if (md.length > 32) {
-                        unsigned char *bytes = (unsigned char *)md.bytes;
-                        unsigned long len = md.length;
-                        // 搜索连续两个 +inf (00 00 00 00 00 00 F0 7F x2)
-                        int replaced = 0;
-                        for (unsigned long k = 0; k + 16 <= len; k++) {
-                            if (bytes[k] == 0x00 && bytes[k+1] == 0x00 && bytes[k+2] == 0x00 &&
-                                bytes[k+3] == 0x00 && bytes[k+4] == 0x00 && bytes[k+5] == 0x00 &&
-                                bytes[k+6] == 0xF0 && bytes[k+7] == 0x7F &&
-                                bytes[k+8] == 0x00 && bytes[k+9] == 0x00 && bytes[k+10] == 0x00 &&
-                                bytes[k+11] == 0x00 && bytes[k+12] == 0x00 && bytes[k+13] == 0x00 &&
-                                bytes[k+14] == 0xF0 && bytes[k+15] == 0x7F) {
-                                double zero = 0.0, w = 14.0, h = 22.0;
-                                memcpy(bytes + k, &zero, 8);
-                                memcpy(bytes + k + 8, &zero, 8);
-                                memcpy(bytes + k + 16, &w, 8);
-                                memcpy(bytes + k + 24, &h, 8);
-                                replaced++;
-                                k += 31;
-                            }
-                        }
-                        PCLog([NSString stringWithFormat:@"NSData ivar %s: %lu bytes, %d inf-pairs patched", nm, len, replaced]);
-                        if (replaced > 0) {
-                            object_setIvar(shape, ivars[i], md);
-                        }
-                    } else {
-                        PCLog([NSString stringWithFormat:@"NSData ivar %s too small (%lu)", nm, (unsigned long)md.length]);
-                    }
-                }
+            char *base = (char *)(__bridge void *)shape;
+            if (strstr(enc, "CGRect")) { // 修正：contains匹配（编码以{开头）
+                CGRect *r = (CGRect *)(base + off);
+                PCLog([NSString stringWithFormat:@"ivar %s hit, was %@ -> fix", nm, NSStringFromCGRect(*r)]);
+                *r = CGRectMake(0, 0, 14, 22);
+            } else if (strstr(enc, "CGSize")) {
+                CGSize *s = (CGSize *)(base + off);
+                PCLog([NSString stringWithFormat:@"ivar %s(CGSize) was %@ -> fix", nm, NSStringFromCGSize(*s)]);
+                *s = CGSizeMake(14, 22);
             }
         }
         if (ivars) free(ivars);
@@ -81,11 +55,8 @@ static void FixShapeBounds(id shape) {
         SEL sizeSel = NSSelectorFromString(@"size");
         if ([shape respondsToSelector:boundsSel]) {
             CGRect b = ((CGRect(*)(id, SEL))objc_msgSend)(shape, boundsSel);
-            PCLog([NSString stringWithFormat:@"after surgery bounds=%@", NSStringFromCGRect(b)]);
-        }
-        if ([shape respondsToSelector:sizeSel]) {
-            CGSize s = ((CGSize(*)(id, SEL))objc_msgSend)(shape, sizeSel);
-            PCLog([NSString stringWithFormat:@"after surgery size=%@", NSStringFromCGSize(s)]);
+            PCLog([NSString stringWithFormat:@"after surgery bounds=%@ size=%@", NSStringFromCGRect(b),
+                ([shape respondsToSelector:sizeSel] ? NSStringFromCGSize(((CGSize(*)(id, SEL))objc_msgSend)(shape, sizeSel)) : @"?")]);
         }
     } @catch (NSException *ex) {
         PCLog([NSString stringWithFormat:@"surgery exception: %@", ex]);
@@ -107,7 +78,6 @@ static id MakeFixedArrowShape(void) {
     return shape;
 }
 
-// 系统圆点（无路径形状）→ 修复bounds后的箭头
 %hook PSPointerClientController
 - (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
     @try {
@@ -130,7 +100,7 @@ static id MakeFixedArrowShape(void) {
                     if (arrow) {
                         ((void(*)(id, SEL, id))objc_msgSend)(mutable, setSel, arrow);
                         region = mutable;
-                        if (logCount < 6) { PCLog(@"dot -> arrow (bounds fixed)"); logCount++; }
+                        if (logCount < 6) { PCLog(@"dot -> arrow (bounds surgically fixed)"); logCount++; }
                     }
                 }
             }
@@ -146,6 +116,6 @@ static id MakeFixedArrowShape(void) {
     %init;
     if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        PCLog(@"pcpointer 2.6 loaded (bounds surgery)");
+        PCLog(@"pcpointer 2.8 loaded (ivar map targeted surgery)");
     });
 }
