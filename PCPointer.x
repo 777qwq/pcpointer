@@ -102,7 +102,7 @@ static CGPoint LastPointerPos(BOOL *ok) {
     });
 }
 + (void)tick {
-    static CGPoint last = CGPointMake(-999, -999);
+    static CGPoint last = { -999.0, -999.0 };
     BOOL ok = NO;
     CGPoint p = LastPointerPos(&ok);
     if (!ok) return;
