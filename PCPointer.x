@@ -43,17 +43,17 @@ static BOOL IsTargetClass(const char *nm) {
     id ps = %orig;
     @try {
         if (ps && [ps isKindOfClass:objc_getClass("PSPointerShape")]) {
-            UIBezierPath *existing = nil;
+            id existing = nil;
             if ([ps respondsToSelector:@selector(path)]) existing = [(id)ps path];
             if (!existing) { // 无自定义路径 = 系统圆点 → 替换为箭头
                 Class psClass = objc_getClass("PSPointerShape");
-                PSPointerShape *arrow = nil;
+                id arrow = nil;
                 if ([psClass respondsToSelector:@selector(customShapeWithPath:)]) {
                     arrow = [psClass customShapeWithPath:ArrowPath()];
                 }
                 if (arrow) {
                     if ([arrow respondsToSelector:@selector(setPinnedPoint:)])
-                        [(id)arrow setPinnedPoint:CGPointMake(0, 0)];
+                        [arrow setPinnedPoint:CGPointMake(0, 0)];
                     static BOOL logged = NO;
                     if (!logged) { PCLog(@"dot -> arrow replaced"); logged = YES; }
                     return arrow;
