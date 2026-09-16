@@ -48,27 +48,23 @@ static void StartBackboardRecon(void) {
                 const char *imgName = class_getImageName(c);
                 const char *img = "unknown";
                 if (imgName) { const char *slash = strrchr(imgName, '/'); img = slash ? slash + 1 : imgName; }
-                fprintf(f, "=== %s  [%s]
-", nm, img);
+                fprintf(f, "=== %s  [%s]\n", nm, img);
                 unsigned int mcount = 0;
                 Method *methods = class_copyMethodList(c, &mcount);
                 for (unsigned int j = 0; j < mcount && j < 60; j++)
-                    fprintf(f, "    - %s
-", sel_getName(method_getName(methods[j])));
+                    fprintf(f, "    - %s\n", sel_getName(method_getName(methods[j])));
                 if (methods) free(methods);
                 Class meta = object_getClass(c);
                 if (meta) {
                     mcount = 0;
                     methods = class_copyMethodList(meta, &mcount);
                     for (unsigned int j = 0; j < mcount && j < 40; j++)
-                        fprintf(f, "    + %s
-", sel_getName(method_getName(methods[j])));
+                        fprintf(f, "    + %s\n", sel_getName(method_getName(methods[j])));
                     if (methods) free(methods);
                 }
             }
         }
-        fprintf(f, "--- total: %u, hits: %u
-", count, hits);
+        fprintf(f, "--- total: %u, hits: %u\n", count, hits);
         free(classes);
         fclose(f);
     });
