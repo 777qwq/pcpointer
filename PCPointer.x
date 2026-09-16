@@ -35,70 +35,12 @@ static UIBezierPath *ArrowPath(void) {
 // 系统圆点替换实验：4种自定义路径变体轮换，定位渲染失败原因
 %hook PSPointerClientController
 - (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
-    @try {
-        static int logCount = 0;
-        if (region && [region respondsToSelector:NSSelectorFromString(@"pointerShape")]) {
-            SEL shapeSel = NSSelectorFromString(@"pointerShape");
-            id shape = ((id(*)(id, SEL))objc_msgSend)(region, shapeSel);
-            BOOL needsReplace = NO;
-            NSString *why = @"";
-            if (!shape) { needsReplace = YES; why = @"nil"; }
-            else if ([shape isKindOfClass:objc_getClass("PSPointerShape")]) {
-                SEL pathSel = NSSelectorFromString(@"path");
-                id p = [(id)shape respondsToSelector:pathSel] ? ((id(*)(id, SEL))objc_msgSend)(shape, pathSel) : nil;
-                if (!p) { needsReplace = YES; why = @"circle"; }
-            }
-            if (needsReplace) {
-                id mutable = [(id)region mutableCopy];
-                SEL setSel = NSSelectorFromString(@"setPointerShape:");
-                if (mutable && [mutable respondsToSelector:setSel]) {
-                    Class psClass = objc_getClass("PSPointerShape");
-                    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
-                    SEL customSelEO = NSSelectorFromString(@"customShapeWithPath:usesEvenOddFillRule:");
-                    static int variantIdx = 0;
-                    int v = variantIdx % 4; variantIdx++;
-                    id newShape = nil;
-                    if (v == 0) {
-                        // 变体0：箭头，不设pinnedPoint
-                        if ([psClass respondsToSelector:customSel])
-                            newShape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
-                    } else if (v == 1) {
-                        // 变体1：简单三角形
-                        UIBezierPath *tri = [UIBezierPath bezierPath];
-                        [tri moveToPoint:CGPointMake(0, 0)];
-                        [tri addLineToPoint:CGPointMake(0, 20)];
-                        [tri addLineToPoint:CGPointMake(14, 10)];
-                        [tri closePath];
-                        if ([psClass respondsToSelector:customSel])
-                            newShape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, tri);
-                    } else if (v == 2) {
-                        // 变体2：箭头 + evenOdd填充
-                        if ([psClass respondsToSelector:customSelEO])
-                            newShape = ((id(*)(id, SEL, id, BOOL))objc_msgSend)(psClass, customSelEO, ArrowPath(), YES);
-                    } else {
-                        // 变体3：放大3倍箭头
-                        UIBezierPath *big = [ArrowPath() copy];
-                        [big applyTransform:CGAffineTransformMakeScale(3.0, 3.0)];
-                        if ([psClass respondsToSelector:customSel])
-                            newShape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, big);
-                    }
-                    if (newShape) {
-                        ((void(*)(id, SEL, id))objc_msgSend)(mutable, setSel, newShape);
-                        region = mutable;
-                        if (logCount < 16) { PCLog([NSString stringWithFormat:@"variant %d applied (shape=%@)", v, why]); logCount++; }
-                    }
-                }
-            } else if (logCount < 16) {
-                PCLog([NSString stringWithFormat:@"shape present (%@), pass", NSStringFromClass([shape class])]);
-                logCount++;
-            }
-        }
-    } @catch (NSException *ex) {
-        PCLog([NSString stringWithFormat:@"region hook exception: %@", ex]);
-    }
+    static int logCount = 0;
+    if (logCount < 3) { PCLog(@"region update (native pipeline, client replacement disabled)"); logCount++; }
     %orig;
 }
 %end
+
 
 %ctor {
     %init;
