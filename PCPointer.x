@@ -30,6 +30,45 @@ static UIBezierPath *ArrowPath(void) {
     return p;
 }
 
+// backboardd 侦察：dump 指针服务端类结构（空闲圆点的真正绘制方）
+static void StartBackboardRecon(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        FILE *f = fopen("/var/mobile/pcpointer_bb.log", "w");
+        if (!f) return;
+        unsigned int count = 0;
+        Class *classes = objc_copyClassList(&count);
+        unsigned int hits = 0;
+        for (unsigned int i = 0; i < count; i++) {
+            Class c = classes[i];
+            const char *nm = class_getName(c);
+            if (!nm) continue;
+            if (strstr(nm, "Pointer") || strstr(nm, "Hover") || strstr(nm, "Shape")) {
+                hits++;
+                const char *imgName = class_getImageName(c);
+                const char *img = "unknown";
+                if (imgName) { const char *slash = strrchr(imgName, '/'); img = slash ? slash + 1 : imgName; }
+                fprintf(f, "=== %s  [%s]\n", nm, img);
+                unsigned int mcount = 0;
+                Method *methods = class_copyMethodList(c, &mcount);
+                for (unsigned int j = 0; j < mcount && j < 60; j++)
+                    fprintf(f, "    - %s\n", sel_getName(method_getName(methods[j])));
+                if (methods) free(methods);
+                Class meta = object_getClass(c);
+                if (meta) {
+                    mcount = 0;
+                    methods = class_copyMethodList(meta, &mcount);
+                    for (unsigned int j = 0; j < mcount && j < 40; j++)
+                        fprintf(f, "    + %s\n", sel_getName(method_getName(methods[j])));
+                    if (methods) free(methods);
+                }
+            }
+        }
+        fprintf(f, "--- total: %u, hits: %u\n", count, hits);
+        free(classes);
+        fclose(f);
+    });
+}
+
 // 侦察模式 v1.0.0：dump SpringBoard 中 Pointer/Cursor 相关类及其方法清单
 // 产出 /var/mobile/pcpointer_recon.log 供分析绘制层，后续版本实现箭头替换
 
@@ -123,8 +162,21 @@ static BOOL IsTargetClass(const char *nm) {
 %ctor {
     %init;
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    if ([bid isEqualToString:@"com.apple.backboardd"]) { StartBackboardRecon(); return; }
     if (![bid isEqualToString:@"com.apple.springboard"]) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // 探测指针服务 mach 服务名
+        Class specClass = objc_getClass("PSPointerDefaultServiceSpecification");
+        if (specClass) {
+            SEL machSel = NSSelectorFromString(@"machName");
+            SEL domSel = NSSelectorFromString(@"domainName");
+            if ([specClass respondsToSelector:machSel]) {
+                id mn = ((id(*)(id, SEL))objc_msgSend)(specClass, machSel);
+                id dn = [specClass respondsToSelector:domSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, domSel) : nil;
+                FILE *sf = fopen("/var/mobile/pcpointer_recon.log", "a");
+                if (sf) { fprintf(sf, "=== mach service: %s / domain: %s\n", mn ? [(NSString*)mn UTF8String] : "?", dn ? [(NSString*)dn UTF8String] : "?"); fclose(sf); }
+            }
+        }
         FILE *f = fopen("/var/mobile/pcpointer_recon.log", "w");
         if (!f) return;
         unsigned int count = 0;
