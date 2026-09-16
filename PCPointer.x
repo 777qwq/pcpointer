@@ -30,35 +30,53 @@ static UIBezierPath *ArrowPath(void) {
     return p;
 }
 
-// ivar手术：修复 customShapeWithPath 的 inf/zero bounds bug
+// blob字节手术：定位形状内部编码数据，替换 inf/零 尺寸字段
 static void FixShapeBounds(id shape) {
     @try {
         unsigned int icount = 0;
         Ivar *ivars = class_copyIvarList([shape class], &icount);
+        PCLog([NSString stringWithFormat:@"ivar count=%u", icount]);
         for (unsigned int i = 0; i < icount; i++) {
-            const char *nm = ivar_getName(ivars[i]);
-            const char *enc = ivar_getTypeEncoding(ivars[i]);
-            if (!enc) continue;
+            const char *nm = ivar_getName(ivars[i]) ?: "?";
+            const char *enc = ivar_getTypeEncoding(ivars[i]) ?: "?";
             ptrdiff_t off = ivar_getOffset(ivars[i]);
-            char *base = (char *)(__bridge void *)shape;
-            if (strstr(enc, "CGRect") == enc) {
-                CGRect *r = (CGRect *)(base + off);
-                PCLog([NSString stringWithFormat:@"ivar %s(CGRect) was %@ -> fix", nm ? nm : "?", NSStringFromCGRect(*r)]);
-                *r = CGRectMake(0, 0, 14, 22);
-            } else if (strstr(enc, "CGSize") == enc) {
-                CGSize *s = (CGSize *)(base + off);
-                PCLog([NSString stringWithFormat:@"ivar %s(CGSize) was %@ -> fix", nm ? nm : "?", NSStringFromCGSize(*s)]);
-                *s = CGSizeMake(14, 22);
-            } else if (enc[0] == 'd' || enc[0] == 'f') {
-                double *d = (double *)(base + off);
-                if (*d > 1e100 || (*d != *d)) { // inf/nan
-                    PCLog([NSString stringWithFormat:@"ivar %s(double) was inf/nan -> fix 0", nm ? nm : "?"]);
-                    *d = 0.0;
+            PCLog([NSString stringWithFormat:@"ivar %s enc=%s off=%d", nm, enc, (int)off]);
+            if (enc[0] == '@') {
+                id obj = object_getIvar(shape, ivars[i]);
+                if ([obj isKindOfClass:[NSData class]]) {
+                    NSMutableData *md = [obj mutableCopy];
+                    if (md.length > 32) {
+                        unsigned char *bytes = (unsigned char *)md.bytes;
+                        unsigned long len = md.length;
+                        // 搜索连续两个 +inf (00 00 00 00 00 00 F0 7F x2)
+                        int replaced = 0;
+                        for (unsigned long k = 0; k + 16 <= len; k++) {
+                            if (bytes[k] == 0x00 && bytes[k+1] == 0x00 && bytes[k+2] == 0x00 &&
+                                bytes[k+3] == 0x00 && bytes[k+4] == 0x00 && bytes[k+5] == 0x00 &&
+                                bytes[k+6] == 0xF0 && bytes[k+7] == 0x7F &&
+                                bytes[k+8] == 0x00 && bytes[k+9] == 0x00 && bytes[k+10] == 0x00 &&
+                                bytes[k+11] == 0x00 && bytes[k+12] == 0x00 && bytes[k+13] == 0x00 &&
+                                bytes[k+14] == 0xF0 && bytes[k+15] == 0x7F) {
+                                double zero = 0.0, w = 14.0, h = 22.0;
+                                memcpy(bytes + k, &zero, 8);
+                                memcpy(bytes + k + 8, &zero, 8);
+                                memcpy(bytes + k + 16, &w, 8);
+                                memcpy(bytes + k + 24, &h, 8);
+                                replaced++;
+                                k += 31;
+                            }
+                        }
+                        PCLog([NSString stringWithFormat:@"NSData ivar %s: %lu bytes, %d inf-pairs patched", nm, len, replaced]);
+                        if (replaced > 0) {
+                            object_setIvar(shape, ivars[i], md);
+                        }
+                    } else {
+                        PCLog([NSString stringWithFormat:@"NSData ivar %s too small (%lu)", nm, (unsigned long)md.length]);
+                    }
                 }
             }
         }
         if (ivars) free(ivars);
-        // 验证
         SEL boundsSel = NSSelectorFromString(@"bounds");
         SEL sizeSel = NSSelectorFromString(@"size");
         if ([shape respondsToSelector:boundsSel]) {
