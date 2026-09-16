@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -48,12 +49,15 @@ static BOOL IsTargetClass(const char *nm) {
             if (!existing) { // 无自定义路径 = 系统圆点 → 替换为箭头
                 Class psClass = objc_getClass("PSPointerShape");
                 id arrow = nil;
-                if ([psClass respondsToSelector:@selector(customShapeWithPath:)]) {
-                    arrow = [psClass customShapeWithPath:ArrowPath()];
+                SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+                if ([psClass respondsToSelector:customSel]) {
+                    arrow = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
                 }
                 if (arrow) {
-                    if ([arrow respondsToSelector:@selector(setPinnedPoint:)])
-                        [arrow setPinnedPoint:CGPointMake(0, 0)];
+                    SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
+                    if ([arrow respondsToSelector:pinSel]) {
+                        ((void(*)(id, SEL, CGPoint))objc_msgSend)(arrow, pinSel, CGPointMake(0, 0));
+                    }
                     static BOOL logged = NO;
                     if (!logged) { PCLog(@"dot -> arrow replaced"); logged = YES; }
                     return arrow;
