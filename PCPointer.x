@@ -149,16 +149,5 @@ static UIBezierPath *ArrowPath(void) {
             free(classes);
             fclose(f);
         });
-        Class specClass = objc_getClass("PSPointerDefaultServiceSpecification");
-        if (specClass) {
-            SEL machSel = NSSelectorFromString(@"machName");
-            SEL domSel = NSSelectorFromString(@"domainName");
-            if ([specClass respondsToSelector:machSel]) {
-                id mn = ((id(*)(id, SEL))objc_msgSend)(specClass, machSel);
-                id dn = [specClass respondsToSelector:domSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, domSel) : nil;
-                FILE *sf = fopen("/var/mobile/pcpointer_mach.log", "w");
-                if (sf) { fprintf(sf, "mach=%s domain=%s\n", mn ? [(NSString*)mn UTF8String] : "?", dn ? [(NSString*)dn UTF8String] : "?"); fclose(sf); }
-            }
-        }
     });
 }
