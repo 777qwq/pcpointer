@@ -17,125 +17,83 @@ static void PCLog(NSString *msg) {
     fclose(f);
 }
 
-// ---------- 自绘箭头（白底黑边，PC风格） ----------
+// macOS风格箭头（尖端在原点）
 static UIBezierPath *ArrowPath(void) {
     UIBezierPath *p = [UIBezierPath bezierPath];
-    [p moveToPoint:CGPointMake(1, 1)];
-    [p addLineToPoint:CGPointMake(1, 17.5)];
-    [p addLineToPoint:CGPointMake(5.2, 13.6)];
-    [p addLineToPoint:CGPointMake(7.8, 19.6)];
-    [p addLineToPoint:CGPointMake(10.2, 18.5)];
-    [p addLineToPoint:CGPointMake(7.6, 12.6)];
-    [p addLineToPoint:CGPointMake(12.6, 12.2)];
+    [p moveToPoint:CGPointMake(0, 0)];
+    [p addLineToPoint:CGPointMake(0, 16.9)];
+    [p addLineToPoint:CGPointMake(4.2, 12.9)];
+    [p addLineToPoint:CGPointMake(6.7, 18.7)];
+    [p addLineToPoint:CGPointMake(9.3, 17.6)];
+    [p addLineToPoint:CGPointMake(6.8, 12.0)];
+    [p addLineToPoint:CGPointMake(11.8, 11.6)];
     [p closePath];
     return p;
 }
 
-static UIWindow *g_window = nil;
-static UIView *g_arrowView = nil;
-
-static void EnsureOverlay(void) {
-    if (g_window) return;
-    UIWindowScene *scene = nil;
-    for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-        if ([s isKindOfClass:[UIWindowScene class]]) { scene = (UIWindowScene *)s; break; }
-    }
-    if (!scene) { PCLog(@"no window scene yet"); return; }
-    UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
-    w.frame = scene.coordinateSpace.bounds;
-    w.windowLevel = 10000000.0; // 最高层：盖过一切内容
-    w.userInteractionEnabled = NO; // 触摸穿透
-    w.backgroundColor = [UIColor clearColor];
-
-    UIView *arrow = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 14, 22)];
-    arrow.userInteractionEnabled = NO;
-    CAShapeLayer *sl = [CAShapeLayer layer];
-    sl.frame = arrow.bounds;
-    sl.path = ArrowPath().CGPath;
-    sl.fillColor = [UIColor whiteColor].CGColor;
-    sl.strokeColor = [UIColor blackColor].CGColor;
-    sl.lineWidth = 1.2;
-    sl.shadowColor = [UIColor blackColor].CGColor;
-    sl.shadowOpacity = 0.35;
-    sl.shadowRadius = 2.0;
-    sl.shadowOffset = CGSizeMake(1.0, 1.0);
-    sl.zPosition = 1000;
-    [arrow.layer addSublayer:sl];
-    [w addSubview:arrow];
-
-    w.hidden = NO;
-    g_window = w;
-    g_arrowView = arrow;
-    PCLog(@"overlay arrow ready");
-}
-
-// ---------- 指针位置轮询 ----------
-static CGPoint LastPointerPos(BOOL *ok) {
-    *ok = NO;
-    Class cls = objc_getClass("BKSMousePointerService");
-    if (!cls) return CGPointZero;
-    SEL shared = NSSelectorFromString(@"sharedInstance");
-    if (![cls respondsToSelector:shared]) return CGPointZero;
-    id svc = ((id(*)(id, SEL))objc_msgSend)(cls, shared);
-    SEL posSel = NSSelectorFromString(@"globalPointerPosition");
-    if (!svc || ![svc respondsToSelector:posSel]) return CGPointZero;
-    CGPoint p = ((CGPoint(*)(id, SEL))objc_msgSend)(svc, posSel);
-    *ok = YES;
-    return p;
-}
-
-@interface PCPoller : NSObject
-+ (void)start;
-@end
-
-@implementation PCPoller
-+ (void)start {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        dispatch_async(dispatch_get_main_queue(), ^{
-            EnsureOverlay();
-            CADisplayLink *link = [CADisplayLink displayLinkWithTarget:[PCPoller class] selector:@selector(tick)];
-            link.preferredFramesPerSecond = 60;
-            [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
-            PCLog(@"polling started");
-        });
-    });
-}
-+ (void)tick {
-    static CGPoint last = { -999.0, -999.0 };
-    BOOL ok = NO;
-    CGPoint p = LastPointerPos(&ok);
-    if (!ok) return;
-    if (p.x == last.x && p.y == last.y) return;
-    last = p;
-    if (g_arrowView) {
-        g_arrowView.frame = CGRectMake(p.x, p.y, 14, 22);
-    }
-}
-@end
-
-// ---------- 捕获指针客户端控制器 → 隐藏原生圆点 ----------
-static id g_pcc = nil;
-static BOOL g_hideRequested = NO;
-
+// 系统圆点替换实验：4种自定义路径变体轮换，定位渲染失败原因
 %hook PSPointerClientController
 - (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
-    if (!g_pcc) {
-        g_pcc = self;
-        PCLog(@"pointer client controller captured");
-    }
-    if (!g_hideRequested && g_pcc) {
-        g_hideRequested = YES;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            SEL hideSel = NSSelectorFromString(@"persistentlyHidePointerAssertionForReason:");
-            if ([g_pcc respondsToSelector:hideSel]) {
-                ((void(*)(id, SEL, id))objc_msgSend)(g_pcc, hideSel, @"PCPointer");
-                PCLog(@"native pointer hidden via assertion");
-            } else {
-                PCLog(@"hide selector missing!");
+    @try {
+        static int logCount = 0;
+        if (region && [region respondsToSelector:NSSelectorFromString(@"pointerShape")]) {
+            SEL shapeSel = NSSelectorFromString(@"pointerShape");
+            id shape = ((id(*)(id, SEL))objc_msgSend)(region, shapeSel);
+            BOOL needsReplace = NO;
+            NSString *why = @"";
+            if (!shape) { needsReplace = YES; why = @"nil"; }
+            else if ([shape isKindOfClass:objc_getClass("PSPointerShape")]) {
+                SEL pathSel = NSSelectorFromString(@"path");
+                id p = [(id)shape respondsToSelector:pathSel] ? ((id(*)(id, SEL))objc_msgSend)(shape, pathSel) : nil;
+                if (!p) { needsReplace = YES; why = @"circle"; }
             }
-            [PCPoller start];
-        });
+            if (needsReplace) {
+                id mutable = [(id)region mutableCopy];
+                SEL setSel = NSSelectorFromString(@"setPointerShape:");
+                if (mutable && [mutable respondsToSelector:setSel]) {
+                    Class psClass = objc_getClass("PSPointerShape");
+                    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+                    SEL customSelEO = NSSelectorFromString(@"customShapeWithPath:usesEvenOddFillRule:");
+                    static int variantIdx = 0;
+                    int v = variantIdx % 4; variantIdx++;
+                    id newShape = nil;
+                    if (v == 0) {
+                        // 变体0：箭头，不设pinnedPoint
+                        if ([psClass respondsToSelector:customSel])
+                            newShape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
+                    } else if (v == 1) {
+                        // 变体1：简单三角形
+                        UIBezierPath *tri = [UIBezierPath bezierPath];
+                        [tri moveToPoint:CGPointMake(0, 0)];
+                        [tri addLineToPoint:CGPointMake(0, 20)];
+                        [tri addLineToPoint:CGPointMake(14, 10)];
+                        [tri closePath];
+                        if ([psClass respondsToSelector:customSel])
+                            newShape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, tri);
+                    } else if (v == 2) {
+                        // 变体2：箭头 + evenOdd填充
+                        if ([psClass respondsToSelector:customSelEO])
+                            newShape = ((id(*)(id, SEL, id, BOOL))objc_msgSend)(psClass, customSelEO, ArrowPath(), YES);
+                    } else {
+                        // 变体3：放大3倍箭头
+                        UIBezierPath *big = [ArrowPath() copy];
+                        [big applyTransform:CGAffineTransformMakeScale(3.0, 3.0)];
+                        if ([psClass respondsToSelector:customSel])
+                            newShape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, big);
+                    }
+                    if (newShape) {
+                        ((void(*)(id, SEL, id))objc_msgSend)(mutable, setSel, newShape);
+                        region = mutable;
+                        if (logCount < 16) { PCLog([NSString stringWithFormat:@"variant %d applied (shape=%@)", v, why]); logCount++; }
+                    }
+                }
+            } else if (logCount < 16) {
+                PCLog([NSString stringWithFormat:@"shape present (%@), pass", NSStringFromClass([shape class])]);
+                logCount++;
+            }
+        }
+    } @catch (NSException *ex) {
+        PCLog([NSString stringWithFormat:@"region hook exception: %@", ex]);
     }
     %orig;
 }
@@ -146,6 +104,6 @@ static BOOL g_hideRequested = NO;
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (![bid isEqualToString:@"com.apple.springboard"]) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        PCLog(@"pcpointer 2.0 loaded");
+        PCLog(@"pcpointer 1.6 loaded (variant experiment)");
     });
 }
