@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -12,42 +14,64 @@ static void BBLog(NSString *msg) {
     fclose(f);
 }
 
+// macOS风格箭头（尖端原点）——在pointeruid进程内创建，不过XPC，直接渲染
+static UIBezierPath *ArrowPath(void) {
+    UIBezierPath *p = [UIBezierPath bezierPath];
+    [p moveToPoint:CGPointMake(0, 0)];
+    [p addLineToPoint:CGPointMake(0, 16.9)];
+    [p addLineToPoint:CGPointMake(4.2, 12.9)];
+    [p addLineToPoint:CGPointMake(6.7, 18.7)];
+    [p addLineToPoint:CGPointMake(9.3, 17.6)];
+    [p addLineToPoint:CGPointMake(6.8, 12.0)];
+    [p addLineToPoint:CGPointMake(11.8, 11.6)];
+    [p closePath];
+    return p;
+}
+
+static id MakeArrowShape(Class psClass) {
+    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+    if (![psClass respondsToSelector:customSel]) return nil;
+    id arrow = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
+    if (arrow) {
+        SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
+        if ([arrow respondsToSelector:pinSel]) {
+            ((void(*)(id, SEL, CGPoint))objc_msgSend)(arrow, pinSel, CGPointMake(0, 0));
+        }
+    }
+    return arrow;
+}
+
+%hook PSPointerShape
++ (id)systemShape {
+    id arrow = MakeArrowShape(self);
+    if (arrow) {
+        static BOOL l1 = NO;
+        if (!l1) { BBLog(@"systemShape -> arrow (daemon-side hijack)"); l1 = YES; }
+        return arrow;
+    }
+    return %orig;
+}
++ (id)circleWithSize:(CGFloat)size {
+    id arrow = MakeArrowShape(self);
+    if (arrow) {
+        static BOOL l2 = NO;
+        if (!l2) { BBLog(@"circleWithSize -> arrow (daemon-side)"); l2 = YES; }
+        return arrow;
+    }
+    return %orig;
+}
++ (id)circleWithBounds:(CGRect)bounds {
+    id arrow = MakeArrowShape(self);
+    if (arrow) {
+        static BOOL l3 = NO;
+        if (!l3) { BBLog(@"circleWithBounds -> arrow (daemon-side)"); l3 = YES; }
+        return arrow;
+    }
+    return %orig;
+}
+%end
+
 %ctor {
     %init;
-    BBLog(@"PCPointerBB injected into backboardd");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        FILE *f = fopen("/var/mobile/pcpointer_bb.log", "a");
-        if (!f) return;
-        unsigned int count = 0;
-        Class *classes = objc_copyClassList(&count);
-        unsigned int hits = 0;
-        for (unsigned int i = 0; i < count; i++) {
-            Class c = classes[i];
-            const char *nm = class_getName(c);
-            if (!nm) continue;
-            if (strstr(nm, "Pointer") || strstr(nm, "Hover") || strstr(nm, "Shape")) {
-                hits++;
-                const char *imgName = class_getImageName(c);
-                const char *img = "unknown";
-                if (imgName) { const char *slash = strrchr(imgName, '/'); img = slash ? slash + 1 : imgName; }
-                fprintf(f, "=== %s  [%s]\n", nm, img);
-                unsigned int mcount = 0;
-                Method *methods = class_copyMethodList(c, &mcount);
-                for (unsigned int j = 0; j < mcount && j < 60; j++)
-                    fprintf(f, "    - %s\n", sel_getName(method_getName(methods[j])));
-                if (methods) free(methods);
-                Class meta = object_getClass(c);
-                if (meta) {
-                    mcount = 0;
-                    methods = class_copyMethodList(meta, &mcount);
-                    for (unsigned int j = 0; j < mcount && j < 40; j++)
-                        fprintf(f, "    + %s\n", sel_getName(method_getName(methods[j])));
-                    if (methods) free(methods);
-                }
-            }
-        }
-        fprintf(f, "--- total: %u, hits: %u\n", count, hits);
-        free(classes);
-        fclose(f);
-    });
+    BBLog(@"PCPointerBB injected into pointeruid (daemon-side arrow ready)");
 }
