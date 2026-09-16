@@ -32,45 +32,6 @@ static UIBezierPath *ArrowPath(void) {
     return p;
 }
 
-// backboardd 侦察：dump 指针服务端类结构（空闲圆点的真正绘制方）
-static void StartBackboardRecon(void) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        FILE *f = fopen("/var/mobile/pcpointer_bb.log", "w");
-        if (!f) return;
-        unsigned int count = 0;
-        Class *classes = objc_copyClassList(&count);
-        unsigned int hits = 0;
-        for (unsigned int i = 0; i < count; i++) {
-            Class c = classes[i];
-            const char *nm = class_getName(c);
-            if (!nm) continue;
-            if (strstr(nm, "Pointer") || strstr(nm, "Hover") || strstr(nm, "Shape")) {
-                hits++;
-                const char *imgName = class_getImageName(c);
-                const char *img = "unknown";
-                if (imgName) { const char *slash = strrchr(imgName, '/'); img = slash ? slash + 1 : imgName; }
-                fprintf(f, "=== %s  [%s]\n", nm, img);
-                unsigned int mcount = 0;
-                Method *methods = class_copyMethodList(c, &mcount);
-                for (unsigned int j = 0; j < mcount && j < 60; j++)
-                    fprintf(f, "    - %s\n", sel_getName(method_getName(methods[j])));
-                if (methods) free(methods);
-                Class meta = object_getClass(c);
-                if (meta) {
-                    mcount = 0;
-                    methods = class_copyMethodList(meta, &mcount);
-                    for (unsigned int j = 0; j < mcount && j < 40; j++)
-                        fprintf(f, "    + %s\n", sel_getName(method_getName(methods[j])));
-                    if (methods) free(methods);
-                }
-            }
-        }
-        fprintf(f, "--- total: %u, hits: %u\n", count, hits);
-        free(classes);
-        fclose(f);
-    });
-}
-
 // 系统圆点替换实验：4种自定义路径变体轮换，定位渲染失败原因
 %hook PSPointerClientController
 - (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
@@ -141,11 +102,7 @@ static void StartBackboardRecon(void) {
 
 %ctor {
     %init;
-    const char *prog = getprogname();
-    NSString *pname = prog ? [NSString stringWithUTF8String:prog] : @"";
-    PCLog([NSString stringWithFormat:@"injected into process: %@", pname]);
-    if ([pname isEqualToString:@"backboardd"]) { StartBackboardRecon(); return; }
-    if (![pname isEqualToString:@"SpringBoard"]) return;
+    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         PCLog(@"pcpointer 1.6 loaded (variant experiment)");
         Class specClass = objc_getClass("PSPointerDefaultServiceSpecification");
