@@ -18,20 +18,6 @@ static void PCLog(NSString *msg) {
     fclose(f);
 }
 
-// macOS风格箭头（尖端在原点）
-static UIBezierPath *ArrowPath(void) {
-    UIBezierPath *p = [UIBezierPath bezierPath];
-    [p moveToPoint:CGPointMake(0, 0)];
-    [p addLineToPoint:CGPointMake(0, 16.9)];
-    [p addLineToPoint:CGPointMake(4.2, 12.9)];
-    [p addLineToPoint:CGPointMake(6.7, 18.7)];
-    [p addLineToPoint:CGPointMake(9.3, 17.6)];
-    [p addLineToPoint:CGPointMake(6.8, 12.0)];
-    [p addLineToPoint:CGPointMake(11.8, 11.6)];
-    [p closePath];
-    return p;
-}
-
 // 系统圆点替换实验：4种自定义路径变体轮换，定位渲染失败原因
 %hook PSPointerClientController
 - (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
