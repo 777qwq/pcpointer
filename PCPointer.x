@@ -5,9 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <stdlib.h>
 
-#define PC_LOG 1 // 诊断轮
+#define PC_LOG 1
 
 static void PCLog(NSString *msg) {
     if (!PC_LOG) return;
@@ -18,113 +17,117 @@ static void PCLog(NSString *msg) {
     fclose(f);
 }
 
-// 系统圆点替换实验：4种自定义路径变体轮换，定位渲染失败原因
-static void SerializeDiagnostic(void) {
-    Class psClass = objc_getClass("PSPointerShape");
-    if (!psClass) { PCLog(@"no PSPointerShape class"); return; }
-    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
-    if (![psClass respondsToSelector:customSel]) { PCLog(@"no customShapeWithPath:"); return; }
-    id tri = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ({
-        UIBezierPath *p = [UIBezierPath bezierPath];
-        [p moveToPoint:CGPointMake(0, 0)];
-        [p addLineToPoint:CGPointMake(0, 20)];
-        [p addLineToPoint:CGPointMake(14, 10)];
-        [p closePath];
-        p;
-    }));
-    SEL circleSel = NSSelectorFromString(@"circleWithSize:");
-    id circ = ((id(*)(id, SEL, CGFloat))objc_msgSend)(psClass, circleSel, (CGFloat)12.0);
-    SEL boundsSel = NSSelectorFromString(@"bounds");
-    SEL sizeSel = NSSelectorFromString(@"size");
-    SEL typeSel = NSSelectorFromString(@"shapeType");
-    SEL pathSel = NSSelectorFromString(@"path");
-    for (int i = 0; i < 2; i++) {
-        id shape = (i == 0) ? tri : circ;
-        NSString *tag = (i == 0) ? @"CUSTOM" : @"BUILTIN_CIRCLE";
-        @try {
-            CGRect bnds = ((CGRect(*)(id, SEL))objc_msgSend)(shape, boundsSel);
-            CGSize sz = ((CGSize(*)(id, SEL))objc_msgSend)(shape, sizeSel);
-            long stype = ((long(*)(id, SEL))objc_msgSend)(shape, typeSel);
-            id p = ((id(*)(id, SEL))objc_msgSend)(shape, pathSel);
-            PCLog([NSString stringWithFormat:@"%@ bounds=%@ size=%@ type=%ld path=%@",
-                tag, NSStringFromCGRect(bnds), NSStringFromCGSize(sz), stype, p ? @"present" : @"nil"]);
-            NSData *data = [NSKeyedArchiver archivedDataWithRootObject:shape requiringSecureCoding:NO error:nil];
-            PCLog([NSString stringWithFormat:@"%@ encoded: %lu bytes", tag, (unsigned long)data.length]);
-            id decoded = [NSKeyedUnarchiver unarchivedObjectOfClass:psClass fromData:data error:nil];
-            if (decoded) {
-                CGRect dbnds = ((CGRect(*)(id, SEL))objc_msgSend)(decoded, boundsSel);
-                CGSize dsz = ((CGSize(*)(id, SEL))objc_msgSend)(decoded, sizeSel);
-                long dtype = ((long(*)(id, SEL))objc_msgSend)(decoded, typeSel);
-                PCLog([NSString stringWithFormat:@"%@ decoded bounds=%@ size=%@ type=%ld", tag, NSStringFromCGRect(dbnds), NSStringFromCGSize(dsz), dtype]);
-            } else {
-                PCLog([NSString stringWithFormat:@"%@ DECODE FAILED", tag]);
+static UIBezierPath *ArrowPath(void) {
+    UIBezierPath *p = [UIBezierPath bezierPath];
+    [p moveToPoint:CGPointMake(0, 0)];
+    [p addLineToPoint:CGPointMake(0, 16.9)];
+    [p addLineToPoint:CGPointMake(4.2, 12.9)];
+    [p addLineToPoint:CGPointMake(6.7, 18.7)];
+    [p addLineToPoint:CGPointMake(9.3, 17.6)];
+    [p addLineToPoint:CGPointMake(6.8, 12.0)];
+    [p addLineToPoint:CGPointMake(11.8, 11.6)];
+    [p closePath];
+    return p;
+}
+
+// ivar手术：修复 customShapeWithPath 的 inf/zero bounds bug
+static void FixShapeBounds(id shape) {
+    @try {
+        unsigned int icount = 0;
+        Ivar *ivars = class_copyIvarList([shape class], &icount);
+        for (unsigned int i = 0; i < icount; i++) {
+            const char *nm = ivar_getName(ivars[i]);
+            const char *enc = ivar_getTypeEncoding(ivars[i]);
+            if (!enc) continue;
+            ptrdiff_t off = ivar_getOffset(ivars[i]);
+            char *base = (char *)(__bridge void *)shape;
+            if (strstr(enc, "CGRect") == enc) {
+                CGRect *r = (CGRect *)(base + off);
+                PCLog([NSString stringWithFormat:@"ivar %s(CGRect) was %@ -> fix", nm ? nm : "?", NSStringFromCGRect(*r)]);
+                *r = CGRectMake(0, 0, 14, 22);
+            } else if (strstr(enc, "CGSize") == enc) {
+                CGSize *s = (CGSize *)(base + off);
+                PCLog([NSString stringWithFormat:@"ivar %s(CGSize) was %@ -> fix", nm ? nm : "?", NSStringFromCGSize(*s)]);
+                *s = CGSizeMake(14, 22);
+            } else if (enc[0] == 'd' || enc[0] == 'f') {
+                double *d = (double *)(base + off);
+                if (*d > 1e100 || (*d != *d)) { // inf/nan
+                    PCLog([NSString stringWithFormat:@"ivar %s(double) was inf/nan -> fix 0", nm ? nm : "?"]);
+                    *d = 0.0;
+                }
             }
-        } @catch (NSException *ex) {
-            PCLog([NSString stringWithFormat:@"%@ exception: %@", tag, ex]);
         }
+        if (ivars) free(ivars);
+        // 验证
+        SEL boundsSel = NSSelectorFromString(@"bounds");
+        SEL sizeSel = NSSelectorFromString(@"size");
+        if ([shape respondsToSelector:boundsSel]) {
+            CGRect b = ((CGRect(*)(id, SEL))objc_msgSend)(shape, boundsSel);
+            PCLog([NSString stringWithFormat:@"after surgery bounds=%@", NSStringFromCGRect(b)]);
+        }
+        if ([shape respondsToSelector:sizeSel]) {
+            CGSize s = ((CGSize(*)(id, SEL))objc_msgSend)(shape, sizeSel);
+            PCLog([NSString stringWithFormat:@"after surgery size=%@", NSStringFromCGSize(s)]);
+        }
+    } @catch (NSException *ex) {
+        PCLog([NSString stringWithFormat:@"surgery exception: %@", ex]);
     }
 }
 
+static id MakeFixedArrowShape(void) {
+    Class psClass = objc_getClass("PSPointerShape");
+    if (!psClass) return nil;
+    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+    if (![psClass respondsToSelector:customSel]) return nil;
+    id shape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
+    if (!shape) return nil;
+    FixShapeBounds(shape);
+    SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
+    if ([shape respondsToSelector:pinSel]) {
+        ((void(*)(id, SEL, CGPoint))objc_msgSend)(shape, pinSel, CGPointMake(0, 0));
+    }
+    return shape;
+}
+
+// 系统圆点（无路径形状）→ 修复bounds后的箭头
 %hook PSPointerClientController
 - (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
-    static BOOL diagDone = NO;
-    if (!diagDone) {
-        diagDone = YES;
-        dispatch_async(dispatch_get_main_queue(), ^{ SerializeDiagnostic(); });
+    @try {
+        static int logCount = 0;
+        if (region && [region respondsToSelector:NSSelectorFromString(@"pointerShape")]) {
+            SEL shapeSel = NSSelectorFromString(@"pointerShape");
+            id shape = ((id(*)(id, SEL))objc_msgSend)(region, shapeSel);
+            BOOL needsReplace = NO;
+            if (!shape) needsReplace = YES;
+            else if ([shape isKindOfClass:objc_getClass("PSPointerShape")]) {
+                SEL pathSel = NSSelectorFromString(@"path");
+                id p = [(id)shape respondsToSelector:pathSel] ? ((id(*)(id, SEL))objc_msgSend)(shape, pathSel) : nil;
+                if (!p) needsReplace = YES;
+            }
+            if (needsReplace) {
+                id mutable = [(id)region mutableCopy];
+                SEL setSel = NSSelectorFromString(@"setPointerShape:");
+                if (mutable && [mutable respondsToSelector:setSel]) {
+                    id arrow = MakeFixedArrowShape();
+                    if (arrow) {
+                        ((void(*)(id, SEL, id))objc_msgSend)(mutable, setSel, arrow);
+                        region = mutable;
+                        if (logCount < 6) { PCLog(@"dot -> arrow (bounds fixed)"); logCount++; }
+                    }
+                }
+            }
+        }
+    } @catch (NSException *ex) {
+        PCLog([NSString stringWithFormat:@"region exception: %@", ex]);
     }
     %orig;
 }
 %end
 
-
 %ctor {
     %init;
     if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        PCLog(@"pcpointer 1.9 loaded (complete recon)");
-        // mach服务名：指针守护进程的身份
-        Class specClass = objc_getClass("PSPointerClientDefaultServiceSpecification");
-        if (specClass) {
-            SEL machSel = NSSelectorFromString(@"machName");
-            SEL domSel = NSSelectorFromString(@"domainName");
-            SEL svcSel = NSSelectorFromString(@"serviceName");
-            FILE *sf = fopen("/var/mobile/pcpointer_mach.log", "w");
-            if (sf) {
-                id mn = [specClass respondsToSelector:machSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, machSel) : nil;
-                id dn = [specClass respondsToSelector:domSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, domSel) : nil;
-                id sn = [specClass respondsToSelector:svcSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, svcSel) : nil;
-                fprintf(sf, "mach=%s domain=%s service=%s\n",
-                    mn ? [(NSString*)mn UTF8String] : "?",
-                    dn ? [(NSString*)dn UTF8String] : "?",
-                    sn ? [(NSString*)sn UTF8String] : "?");
-                fclose(sf);
-                PCLog(@"mach service probed");
-            }
-        }
-        // 按框架dump：PointerUIServices 全部类（找服务端）
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            FILE *f = fopen("/var/mobile/pcpointer_puis.log", "w");
-            if (!f) return;
-            unsigned int count = 0;
-            Class *classes = objc_copyClassList(&count);
-            unsigned int hits = 0;
-            for (unsigned int i = 0; i < count; i++) {
-                Class c = classes[i];
-                const char *imgName = class_getImageName(c);
-                if (!imgName || !strstr(imgName, "PointerUI")) continue;
-                hits++;
-                const char *nm = class_getName(c);
-                const char *slash = strrchr(imgName, '/');
-                fprintf(f, "=== %s  [%s]\n", nm, slash ? slash + 1 : imgName);
-                unsigned int mcount = 0;
-                Method *methods = class_copyMethodList(c, &mcount);
-                for (unsigned int j = 0; j < mcount && j < 50; j++)
-                    fprintf(f, "    - %s\n", sel_getName(method_getName(methods[j])));
-                if (methods) free(methods);
-            }
-            fprintf(f, "--- total: %u, PointerUI classes: %u\n", count, hits);
-            free(classes);
-            fclose(f);
-        });
+        PCLog(@"pcpointer 2.6 loaded (bounds surgery)");
     });
 }
