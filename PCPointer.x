@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>
 
 #define PC_LOG 1 // 诊断轮
 
@@ -140,10 +141,23 @@ static void StartBackboardRecon(void) {
 
 %ctor {
     %init;
-    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    if ([bid isEqualToString:@"com.apple.backboardd"]) { StartBackboardRecon(); return; }
-    if (![bid isEqualToString:@"com.apple.springboard"]) return;
+    const char *prog = getprogname();
+    NSString *pname = prog ? [NSString stringWithUTF8String:prog] : @"";
+    PCLog([NSString stringWithFormat:@"injected into process: %@", pname]);
+    if ([pname isEqualToString:@"backboardd"]) { StartBackboardRecon(); return; }
+    if (![pname isEqualToString:@"SpringBoard"]) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         PCLog(@"pcpointer 1.6 loaded (variant experiment)");
+        Class specClass = objc_getClass("PSPointerDefaultServiceSpecification");
+        if (specClass) {
+            SEL machSel = NSSelectorFromString(@"machName");
+            SEL domSel = NSSelectorFromString(@"domainName");
+            if ([specClass respondsToSelector:machSel]) {
+                id mn = ((id(*)(id, SEL))objc_msgSend)(specClass, machSel);
+                id dn = [specClass respondsToSelector:domSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, domSel) : nil;
+                FILE *sf = fopen("/var/mobile/pcpointer_mach.log", "w");
+                if (sf) { fprintf(sf, "mach=%s domain=%s\n", mn ? [(NSString*)mn UTF8String] : "?", dn ? [(NSString*)dn UTF8String] : "?"); fclose(sf); }
+            }
+        }
     });
 }
