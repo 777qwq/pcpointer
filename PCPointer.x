@@ -142,11 +142,19 @@ static BOOL IsTargetClass(const char *nm) {
                 SEL setSel = NSSelectorFromString(@"setPointerShape:");
                 if (mutable && [mutable respondsToSelector:setSel]) {
                     Class psClass = objc_getClass("PSPointerShape");
-                    id newShape = SquareShape(psClass); // A/B实验：方块测试
+                    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+                    id newShape = nil;
+                    if ([psClass respondsToSelector:customSel]) {
+                        newShape = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
+                    }
                     if (newShape) {
+                        SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
+                        if ([newShape respondsToSelector:pinSel]) {
+                            ((void(*)(id, SEL, CGPoint))objc_msgSend)(newShape, pinSel, CGPointMake(0, 0));
+                        }
                         ((void(*)(id, SEL, id))objc_msgSend)(mutable, setSel, newShape);
                         region = mutable;
-                        if (logCount < 5) { PCLog([NSString stringWithFormat:@"shape(%@) -> SQUARE replaced", why]); logCount++; }
+                        if (logCount < 5) { PCLog([NSString stringWithFormat:@"shape(%@) -> arrow replaced", why]); logCount++; }
                     }
                 }
             } else if (logCount < 3) {
@@ -158,6 +166,50 @@ static BOOL IsTargetClass(const char *nm) {
         PCLog([NSString stringWithFormat:@"region hook exception: %@", ex]);
     }
     %orig;
+}
+%end
+
+// 空闲圆点 = 守护进程默认形状（systemShape/circle工厂）。在守护进程进程内hook工厂本身。
+static id MakeArrowShape(Class psClass) {
+    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+    if (![psClass respondsToSelector:customSel]) return nil;
+    id arrow = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
+    if (arrow) {
+        SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
+        if ([arrow respondsToSelector:pinSel]) {
+            ((void(*)(id, SEL, CGPoint))objc_msgSend)(arrow, pinSel, CGPointMake(0, 0));
+        }
+    }
+    return arrow;
+}
+
+%hook PSPointerShape
++ (id)systemShape {
+    id arrow = MakeArrowShape(self);
+    if (arrow) {
+        static BOOL l1 = NO;
+        if (!l1) { PCLog(@"systemShape -> arrow (default dot hijacked)"); l1 = YES; }
+        return arrow;
+    }
+    return %orig;
+}
++ (id)circleWithSize:(CGFloat)size {
+    id arrow = MakeArrowShape(self);
+    if (arrow) {
+        static BOOL l2 = NO;
+        if (!l2) { PCLog(@"circleWithSize -> arrow"); l2 = YES; }
+        return arrow;
+    }
+    return %orig;
+}
++ (id)circleWithBounds:(CGRect)bounds {
+    id arrow = MakeArrowShape(self);
+    if (arrow) {
+        static BOOL l3 = NO;
+        if (!l3) { PCLog(@"circleWithBounds -> arrow"); l3 = YES; }
+        return arrow;
+    }
+    return %orig;
 }
 %end
 
