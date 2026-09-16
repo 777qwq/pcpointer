@@ -19,10 +19,50 @@ static void PCLog(NSString *msg) {
 }
 
 // 系统圆点替换实验：4种自定义路径变体轮换，定位渲染失败原因
+static void SerializeDiagnostic(void) {
+    Class psClass = objc_getClass("PSPointerShape");
+    if (!psClass) { PCLog(@"no PSPointerShape class"); return; }
+    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+    if (![psClass respondsToSelector:customSel]) { PCLog(@"no customShapeWithPath:"); return; }
+    id tri = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ({
+        UIBezierPath *p = [UIBezierPath bezierPath];
+        [p moveToPoint:CGPointMake(0, 0)];
+        [p addLineToPoint:CGPointMake(0, 20)];
+        [p addLineToPoint:CGPointMake(14, 10)];
+        [p closePath];
+        p;
+    }));
+    SEL circleSel = NSSelectorFromString(@"circleWithSize:");
+    id circ = ((id(*)(id, SEL, CGFloat))objc_msgSend)(psClass, circleSel, (CGFloat)12.0);
+    for (int i = 0; i < 2; i++) {
+        id shape = (i == 0) ? tri : circ;
+        NSString *tag = (i == 0) ? @"CUSTOM" : @"BUILTIN_CIRCLE";
+        @try {
+            NSData *data = [NSKeyedArchiver archivedDataWithRootObject:shape requiringSecureCoding:NO error:nil];
+            PCLog([NSString stringWithFormat:@"%@ encoded: %lu bytes", tag, (unsigned long)data.length]);
+            if (data) {
+                id decoded = [NSKeyedUnarchiver unarchivedObjectOfClass:[shape class] fromData:data error:nil];
+                if (decoded) {
+                    SEL pathSel = NSSelectorFromString(@"path");
+                    id dp = [decoded respondsToSelector:pathSel] ? ((id(*)(id, SEL))objc_msgSend)(decoded, pathSel) : nil;
+                    PCLog([NSString stringWithFormat:@"%@ decoded ok, path=%@", tag, dp ? @"present" : @"NIL"]);
+                } else {
+                    PCLog([NSString stringWithFormat:@"%@ DECODE FAILED", tag]);
+                }
+            }
+        } @catch (NSException *ex) {
+            PCLog([NSString stringWithFormat:@"%@ serialize exception: %@", tag, ex]);
+        }
+    }
+}
+
 %hook PSPointerClientController
 - (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
-    static int logCount = 0;
-    if (logCount < 3) { PCLog(@"region update (native pipeline, client replacement disabled)"); logCount++; }
+    static BOOL diagDone = NO;
+    if (!diagDone) {
+        diagDone = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{ SerializeDiagnostic(); });
+    }
     %orig;
 }
 %end
