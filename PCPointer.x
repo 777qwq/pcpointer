@@ -104,7 +104,26 @@ static UIBezierPath *ArrowPath(void) {
     %init;
     if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        PCLog(@"pcpointer 1.6 loaded (variant experiment)");
+        PCLog(@"pcpointer 1.9 loaded (complete recon)");
+        // mach服务名：指针守护进程的身份
+        Class specClass = objc_getClass("PSPointerDefaultServiceSpecification");
+        if (specClass) {
+            SEL machSel = NSSelectorFromString(@"machName");
+            SEL domSel = NSSelectorFromString(@"domainName");
+            SEL svcSel = NSSelectorFromString(@"serviceName");
+            FILE *sf = fopen("/var/mobile/pcpointer_mach.log", "w");
+            if (sf) {
+                id mn = [specClass respondsToSelector:machSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, machSel) : nil;
+                id dn = [specClass respondsToSelector:domSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, domSel) : nil;
+                id sn = [specClass respondsToSelector:svcSel] ? ((id(*)(id, SEL))objc_msgSend)(specClass, svcSel) : nil;
+                fprintf(sf, "mach=%s domain=%s service=%s\n",
+                    mn ? [(NSString*)mn UTF8String] : "?",
+                    dn ? [(NSString*)dn UTF8String] : "?",
+                    sn ? [(NSString*)sn UTF8String] : "?");
+                fclose(sf);
+                PCLog(@"mach service probed");
+            }
+        }
         // 按框架dump：PointerUIServices 全部类（找服务端）
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             FILE *f = fopen("/var/mobile/pcpointer_puis.log", "w");
