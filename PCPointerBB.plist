@@ -1,5 +1,5 @@
 {
     Filter = {
-        Bundles = ("com.apple.backboardd");
+        Classes = ("PSPointerShape");
     };
 }
