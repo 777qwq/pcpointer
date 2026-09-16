@@ -34,24 +34,33 @@ static void SerializeDiagnostic(void) {
     }));
     SEL circleSel = NSSelectorFromString(@"circleWithSize:");
     id circ = ((id(*)(id, SEL, CGFloat))objc_msgSend)(psClass, circleSel, (CGFloat)12.0);
+    SEL boundsSel = NSSelectorFromString(@"bounds");
+    SEL sizeSel = NSSelectorFromString(@"size");
+    SEL typeSel = NSSelectorFromString(@"shapeType");
+    SEL pathSel = NSSelectorFromString(@"path");
     for (int i = 0; i < 2; i++) {
         id shape = (i == 0) ? tri : circ;
         NSString *tag = (i == 0) ? @"CUSTOM" : @"BUILTIN_CIRCLE";
         @try {
+            CGRect bnds = ((CGRect(*)(id, SEL))objc_msgSend)(shape, boundsSel);
+            CGSize sz = ((CGSize(*)(id, SEL))objc_msgSend)(shape, sizeSel);
+            long stype = ((long(*)(id, SEL))objc_msgSend)(shape, typeSel);
+            id p = ((id(*)(id, SEL))objc_msgSend)(shape, pathSel);
+            PCLog([NSString stringWithFormat:@"%@ bounds=%@ size=%@ type=%ld path=%@",
+                tag, NSStringFromCGRect(bnds), NSStringFromCGSize(sz), stype, p ? @"present" : @"nil"]);
             NSData *data = [NSKeyedArchiver archivedDataWithRootObject:shape requiringSecureCoding:NO error:nil];
             PCLog([NSString stringWithFormat:@"%@ encoded: %lu bytes", tag, (unsigned long)data.length]);
-            if (data) {
-                id decoded = [NSKeyedUnarchiver unarchivedObjectOfClass:[shape class] fromData:data error:nil];
-                if (decoded) {
-                    SEL pathSel = NSSelectorFromString(@"path");
-                    id dp = [decoded respondsToSelector:pathSel] ? ((id(*)(id, SEL))objc_msgSend)(decoded, pathSel) : nil;
-                    PCLog([NSString stringWithFormat:@"%@ decoded ok, path=%@", tag, dp ? @"present" : @"NIL"]);
-                } else {
-                    PCLog([NSString stringWithFormat:@"%@ DECODE FAILED", tag]);
-                }
+            id decoded = [NSKeyedUnarchiver unarchivedObjectOfClass:psClass fromData:data error:nil];
+            if (decoded) {
+                CGRect dbnds = ((CGRect(*)(id, SEL))objc_msgSend)(decoded, boundsSel);
+                CGSize dsz = ((CGSize(*)(id, SEL))objc_msgSend)(decoded, sizeSel);
+                long dtype = ((long(*)(id, SEL))objc_msgSend)(decoded, typeSel);
+                PCLog([NSString stringWithFormat:@"%@ decoded bounds=%@ size=%@ type=%ld", tag, NSStringFromCGRect(dbnds), NSStringFromCGSize(dsz), dtype]);
+            } else {
+                PCLog([NSString stringWithFormat:@"%@ DECODE FAILED", tag]);
             }
         } @catch (NSException *ex) {
-            PCLog([NSString stringWithFormat:@"%@ serialize exception: %@", tag, ex]);
+            PCLog([NSString stringWithFormat:@"%@ exception: %@", tag, ex]);
         }
     }
 }
