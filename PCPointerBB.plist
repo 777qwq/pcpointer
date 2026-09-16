@@ -1,5 +1,5 @@
 {
     Filter = {
-        Processes = ("pointeruid");
+        Bundles = ("com.apple.backboardd");
     };
 }
