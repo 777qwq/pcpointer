@@ -41,7 +41,7 @@ static id MakeArrowShape(Class psClass) {
         if (strstr(nm, "_bounds") && strstr(enc, "CGRect")) {
             ptrdiff_t off = ivar_getOffset(ivars[i]);
             CGRect *r = (CGRect *)((char *)(__bridge void *)shape + off);
-            PCLog(@"[daemon] fixing _bounds");
+            BBLog(@"fixing _bounds");
             *r = CGRectMake(0, 0, 14, 22);
         }
     }
