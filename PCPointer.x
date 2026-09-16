@@ -71,6 +71,51 @@ static BOOL IsTargetClass(const char *nm) {
 }
 %end
 
+%hook PSPointerClientController
+// 系统默认圆点走这里：region.pointerShape 为空/圆 → 强制箭头
+- (void)setActiveHoverRegion:(id)region transitionCompletion:(id)completion {
+    @try {
+        static int logCount = 0;
+        if (region && [region respondsToSelector:@selector(pointerShape)]) {
+            id shape = [(id)region pointerShape];
+            BOOL needsReplace = NO;
+            NSString *why = @"";
+            if (!shape) { needsReplace = YES; why = @"nil"; }
+            else if ([shape isKindOfClass:objc_getClass("PSPointerShape")]) {
+                id p = [(id)shape respondsToSelector:@selector(path)] ? [(id)shape path] : nil;
+                if (!p) { needsReplace = YES; why = @"circle"; }
+            }
+            if (needsReplace) {
+                id mutable = [(id)region respondsToSelector:@selector(mutableCopy)] ? [(id)region mutableCopy] : nil;
+                SEL setSel = NSSelectorFromString(@"setPointerShape:");
+                if (mutable && [mutable respondsToSelector:setSel]) {
+                    Class psClass = objc_getClass("PSPointerShape");
+                    SEL customSel = NSSelectorFromString(@"customShapeWithPath:");
+                    if ([psClass respondsToSelector:customSel]) {
+                        id arrow = ((id(*)(id, SEL, id))objc_msgSend)(psClass, customSel, ArrowPath());
+                        if (arrow) {
+                            SEL pinSel = NSSelectorFromString(@"setPinnedPoint:");
+                            if ([arrow respondsToSelector:pinSel]) {
+                                ((void(*)(id, SEL, CGPoint))objc_msgSend)(arrow, pinSel, CGPointMake(0, 0));
+                            }
+                            ((void(*)(id, SEL, id))objc_msgSend)(mutable, setSel, arrow);
+                            region = mutable;
+                            if (logCount < 3) { PCLog([NSString stringWithFormat:@"shape(%@) -> arrow, replaced", why]); logCount++; }
+                        }
+                    }
+                }
+            } else if (logCount < 3) {
+                PCLog([NSString stringWithFormat:@"shape present (%@), pass through", NSStringFromClass([shape class])]);
+                logCount++;
+            }
+        }
+    } @catch (NSException *ex) {
+        PCLog([NSString stringWithFormat:@"region hook exception: %@", ex]);
+    }
+    %orig;
+}
+%end
+
 %ctor {
     %init;
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
