@@ -77,7 +77,11 @@ static BOOL IsTargetClass(const char *nm) {
     @try {
         static int logCount = 0;
         if (region && [region respondsToSelector:@selector(pointerShape)]) {
-            id shape = [(id)region pointerShape];
+            id shape = nil;
+            SEL shapeSel = NSSelectorFromString(@"pointerShape");
+            if ([region respondsToSelector:shapeSel]) {
+                shape = ((id(*)(id, SEL))objc_msgSend)(region, shapeSel);
+            }
             BOOL needsReplace = NO;
             NSString *why = @"";
             if (!shape) { needsReplace = YES; why = @"nil"; }
